@@ -1,0 +1,133 @@
+import requests
+from bs4 import BeautifulSoup
+from concurrent.futures import ThreadPoolExecutor
+import re
+import threading
+import socket
+import time
+from selenium import webdriver
+#伪装头部
+cookie = 'BAIDUID=E806443DB07E2DB5A92D816801694AB1:FG=1; BIDUPSID=E806443DB07E2DB5A92D816801694AB1; PSTM=1564817771; CPROID=E806443DB07E2DB5A92D816801694AB1:FG=1; BDUSS=5GTnpmU2kzVFY4bEZHVzI2OUpSLUNVd1M4TG00ajUwY3lNSGNnU09IUEtyNVpkSVFBQUFBJCQAAAAAAAAAAAEAAAC2cwkINTkxMDI2NjQ1AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMoib13KIm9dcW; BDORZ=B490B5EBF6F3CD402E515D22BCDA1598; BDRCVFR[feWj1Vr5u3D]=I67x6TjHwwYf0; delPer=0; PSINO=7; H_PS_PSSID=1993_1449_21114_20697_29523_29520_29720_29568_29221'
+cookie_dict = {i.split("=")[0]: i.split("=")[-1] for i in cookie.split("; ")}
+header={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/76.0.3809.132 Safari/537.36'}
+exitFlag = 0
+lock = threading.Lock()#线程锁
+
+def getHTMLText(url):#获取网页url
+    try:
+        r=requests.get(url,timeout=60)
+        r.raise_for_status()
+        r.encoding=r.apparent_encoding
+        return r.text
+    except:
+        return ""
+
+def parserPage(ilt,html):#爬取药品网首页分类的各url
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+        result = soup.find_all(class_="tab_content")
+        for t in soup.find_all(class_="tab_content"):
+            t.find_all(id="tabpanel_0")
+            for i in t.find_all(id="tabpanel_0"):
+                i.find_all(name="a")
+                for a in i.find_all(name="a"):
+                    ilt.append(a.get("href"))
+    except:
+        print("")
+
+def parserPage_2(ilt,url):#爬取分类中各药品的url
+    try:
+        driver = webdriver.Chrome("D:\python\Lib\site-packages\selenium\webdriver\chrome\chromedriver.exe")  # 调用Chrome驱动
+        chrome_driver = r"D:\python\Lib\site-packages\selenium\webdriver\chrome\chromedriver.exe"
+        browser = webdriver.Chrome(executable_path=chrome_driver)
+        driver.get(url)  # 请求页面，打开一个浏览器窗口
+        try:
+          pages = driver.find_element_by_link_text("查看更多药品")
+        except:
+            pass
+        for j in range(4):
+            try:
+                driver.execute_script("arguments[0].click();", pages)
+                time.sleep(1)
+            except:
+                pass
+        titles = driver.find_elements_by_xpath("//ul/li/a")
+        for t in titles:
+            ilt.append(t.get_attribute("href"))
+        driver.quit()
+    except:
+        pass
+
+def parserPage_3(ilt,html,url):#爬取药品详细中的药品名称和适应症
+    try:
+        soup = BeautifulSoup(html+"manual", "html.parser")
+        result = soup.find_all(class_="drug_xg drug_new_m")
+        part_list = []
+        for c in soup.find_all(class_="drug_xg drug_new_m"):
+              c.find_all(name="h3")
+              for p in c.find(name="h3"):
+                  part_list.append(p.string)#药品名称
+
+        pattern = re.compile('<p.*?英文名称：.*?(.*?)<p>', re.S)
+        content = requests.get(url+ "manual").text
+        results = re.findall(pattern, content)
+        result = re.findall('.*?(.*?)<br />', results[0])
+        part_list.append(result[0])#英文名
+
+        content = requests.get(url).text
+        pattern = re.compile('<p><strong>【功能主治】</strong></p>.*?(.*?)</p>', re.S)
+        results = re.findall(pattern, content)
+        result = re.findall('<p>.*?(.*?)$', results[0])
+        part_list.append(result[0])#功能主治
+
+        content = requests.get(url+"manual").text
+        pattern = re.compile('<div.*?【不良反应】 </strong></p>.*?(.*?)</p>', re.S)
+        results = re.findall(pattern, content)
+        result = re.findall('<p>.*?(.*?)$', results[0])
+        part_list.append(result[0])#不良反应
+        ilt.append(part_list)
+    except:
+        pass
+
+
+def printGoodsList(ilt):#存取（打印）爬取内容到文本中
+    lock.acquire()
+    try:
+     tplt = "{:10}\t{:8}\t{:10}\t{:10}"
+     for i in ilt:
+         print(i[0],i[1],i[2],i[3])
+     try:
+        file= open(r'D:\medicine39.txt','a')
+        for i in ilt:
+            try:
+               file.write(tplt.format(i[0],i[1],i[2],i[3])+'\n')
+            except:
+                pass
+     finally:
+        if file:
+            file.close()
+    except:
+        pass
+    lock.release()
+
+def thread_search(ul):  # 子线程
+    inforList = []
+    html = getHTMLText(ul)
+    parserPage_3(inforList, html, ul)
+
+    printGoodsList(inforList)
+
+def main():#主线程
+    start_url='http://wapypk.39.net/keshi.html'
+    List=[]
+    infoList = []
+    html=getHTMLText(start_url)
+    parserPage(List,html)
+    for url in List:
+        parserPage_2(infoList, url)
+    with ThreadPoolExecutor(max_workers=60)as pool:
+        results = list(pool.map(thread_search, infoList))
+
+
+
+main()
